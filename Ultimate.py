@@ -145,7 +145,14 @@ def apply_css_direction(direction):
 # PDF Search and Screenshot Class
 class PDFSearchAndDisplay:
     def __init__(self):
-        pass
+        self.total_pages = 0
+        with fitz.open(pdf_path) as doc:
+            self.total_pages = len(doc)
+
+    def validate_page_number(self, page_number):
+        """Validate if page number exists in PDF"""
+        # Adjust for 1-based page numbers in metadata
+        return 1 <= page_number <= self.total_pages
 
     def search_and_highlight(self, pdf_path, search_term):
         highlighted_pages = []
@@ -153,26 +160,24 @@ class PDFSearchAndDisplay:
             for page_number, page in enumerate(pdf.pages):
                 text = page.extract_text()
                 if search_term in text:
-                    highlighted_pages.append((page_number, text))
+                    highlighted_pages.append((page_number + 1, text))
         return highlighted_pages
 
     def capture_screenshots(self, pdf_path, pages):
         doc = fitz.open(pdf_path)
         screenshots = []
         for page_number, _ in pages:
-            # Validate page number
-            if page_number < 0 or page_number >= len(doc):
-                st.warning(f"Invalid page number: {page_number}. Skipping this page.")
-                continue  # Skip invalid page numbers
-
-            try:
-                page = doc.load_page(page_number)
-                pix = page.get_pixmap()
-                screenshot_path = f"screenshot_page_{page_number}.png"
-                pix.save(screenshot_path)
-                screenshots.append(screenshot_path)
-            except Exception as e:
-                st.error(f"Error capturing screenshot for page {page_number}: {str(e)}")
+            # Adjust for 0-based page numbers in PyMuPDF
+            pdf_page = page_number - 1
+            if self.validate_page_number(page_number):
+                try:
+                    page = doc.load_page(pdf_page)
+                    pix = page.get_pixmap()
+                    screenshot_path = f"screenshot_page_{page_number}.png"
+                    pix.save(screenshot_path)
+                    screenshots.append((screenshot_path, page_number))
+                except Exception as e:
+                    st.error(f"Error capturing screenshot for page {page_number}: {str(e)}")
         return screenshots
 
 # Sidebar configuration
@@ -489,24 +494,42 @@ def process_user_input(user_input):
                 # Update chat history
                 st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
 
-            # Show page references if response is valid
-            if not any(phrase in assistant_response for phrase in negative_phrases):
-                with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
-                    if "context" in response:
-                        page_numbers = set()
-                        for doc in response["context"]:
-                            page_number = doc.metadata.get("page", "unknown")
-                            if page_number != "unknown" and str(page_number).isdigit():
-                                page_numbers.add(int(page_number))
+            # Always show page references section
+            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References", expanded=True):
+                if "context" in response:
+                    # Extract and validate page numbers
+                    page_numbers = set()
+                    for doc in response["context"]:
+                        page_number = doc.metadata.get("page", "unknown")
+                        if page_number != "unknown" and str(page_number).isdigit():
+                            page_num = int(page_number)
+                            if pdf_searcher.validate_page_number(page_num):
+                                page_numbers.add(page_num)
 
-                        if page_numbers:
-                            page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
-                            st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+                    if page_numbers:
+                        # Display page numbers
+                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
+                        st.write(f"### {'الصفحات المرجعية:' if interface_language == 'العربية' else 'Reference Pages:'} {page_numbers_str}")
+                        st.write("---")
 
-                            highlighted_pages = [(page_number, "") for page_number in page_numbers]
-                            screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
-                            for screenshot in screenshots:
-                                st.image(screenshot)
+                        # Create two columns for screenshots with better spacing
+                        num_pages = len(page_numbers)
+                        col1, col2 = st.columns(2)
+                        
+                        for idx, page_number in enumerate(sorted(page_numbers)):
+                            col = col1 if idx % 2 == 0 else col2
+                            with col:
+                                st.write(f"#### {'صفحة' if interface_language == 'العربية' else 'Page'} {page_number}")
+                                highlighted_pages = [(page_number, "")]
+                                screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                                for screenshot, page_num in screenshots:
+                                    st.image(screenshot, use_column_width=True)
+                                st.write("---")
+                    else:
+                        st.warning("لم يتم العثور على صفحات صالحة للإجابة" if interface_language == "العربية" else "No valid pages found for the answer")
+                else:
+                    st.warning("لم يتم العثور على سياق للإجابة" if interface_language == "العربية" else "No context found for the answer")
+
         else:
             assistant_response = (
                 "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
