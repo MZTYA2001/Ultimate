@@ -516,6 +516,16 @@ if interface_language == "العربية":
 else:
     human_input = st.chat_input("Type your question here...")
 
+# If text input is detected, process it
+if human_input:
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(human_input)
+    
+    # Process the input
+    is_first_message = len(st.session_state.messages) == 0
+    process_user_input(human_input, is_first_message)
+
 # Create new chat if no chat is selected
 if st.session_state.current_chat_id is None:
     create_new_chat()
