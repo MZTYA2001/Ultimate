@@ -360,7 +360,7 @@ col1, col2 = st.columns([1, 4])  # Adjust the ratio as needed
 
 # Display the logo in the first column
 with col1:
-    st.image("BGC Logo Colored.svg", width=100)  # Adjust the width as needed
+    st.image("BGC Logo Colored.svg", width=100, use_container_width=False)  # Adjust the width as needed
 
 # Display the title and description in the second column
 with col2:
@@ -537,19 +537,18 @@ def process_user_input(user_input):
                                             st.image(
                                                 screenshot, 
                                                 caption=f"{'صفحة' if interface_language == 'العربية' else 'Page'} {page_num}",
-                                                use_column_width=True,
+                                                use_container_width=True,
                                                 output_format="PNG"
                                             )
                                         
                                         # Add relevant context if available and not empty
                                         if page_number in page_contexts and page_contexts[page_number]:
-                                            with st.expander(f"{'المحتوى ذو الصلة' if interface_language == 'العربية' else 'Relevant Content'}", expanded=False):
-                                                for context in page_contexts[page_number]:
-                                                    st.markdown(f"```\n{context.strip()}\n```")
+                                            st.markdown(f"#### {'المحتوى ذو الصلة' if interface_language == 'العربية' else 'Relevant Content'}")
+                                            for context in page_contexts[page_number]:
+                                                st.markdown(f"```\n{context.strip()}\n```")
                                         
                                         # Add spacing between pages
                                         st.write("")
-
 
                     else:
                         st.warning(
@@ -563,6 +562,7 @@ def process_user_input(user_input):
                         if interface_language == "العربية" 
                         else "No reference context found for the answer. Please rephrase your question."
                     )
+
 
 
         else:
