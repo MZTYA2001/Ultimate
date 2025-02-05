@@ -7,9 +7,108 @@ from langchain.chains import create_retrieval_chain
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.memory import ConversationBufferMemory
-from streamlit_mic_recorder import speech_to_text  # Import speech-to-text function
-import fitz  # PyMuPDF for capturing screenshots
-import pdfplumber  # For searching text in PDF
+from streamlit_mic_recorder import speech_to_text
+import fitz
+import pdfplumber
+from datetime import datetime, timedelta
+
+# Add UI text dictionary for multilingual support
+UI_TEXTS = {
+    "English": {
+        "new_chat": "New Chat",
+        "previous_chats": "Previous Chats",
+        "today": "Today",
+        "yesterday": "Yesterday",
+        "error_question": "Error processing question: "
+    },
+    "العربية": {
+        "new_chat": "محادثة جديدة",
+        "previous_chats": "المحادثات السابقة",
+        "today": "اليوم",
+        "yesterday": "أمس",
+        "error_question": "خطأ في معالجة السؤال: "
+    }
+}
+
+# Initialize session state for chat history
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = {}
+if 'current_chat_id' not in st.session_state:
+    st.session_state.current_chat_id = None
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'chat_memories' not in st.session_state:
+    st.session_state.chat_memories = {}
+
+def create_new_chat():
+    """Create a new independent chat"""
+    chat_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    st.session_state.current_chat_id = chat_id
+    st.session_state.messages = []
+    
+    # Create new memory instance for this specific chat
+    st.session_state.chat_memories[chat_id] = ConversationBufferMemory(
+        memory_key="history",
+        return_messages=True
+    )
+    
+    # Initialize chat but don't show in history until first message
+    if chat_id not in st.session_state.chat_history:
+        st.session_state.chat_history[chat_id] = {
+            'messages': [],
+            'timestamp': datetime.now(),
+            'first_message': None,
+            'visible': False
+        }
+    st.rerun()
+    return chat_id
+
+def update_chat_title(chat_id, message):
+    """Update chat title"""
+    if chat_id in st.session_state.chat_history:
+        title = message.strip().replace('\n', ' ')
+        title = title[:50] + '...' if len(title) > 50 else title
+        st.session_state.chat_history[chat_id]['first_message'] = title
+        st.rerun()
+
+def load_chat(chat_id):
+    """Load a specific chat"""
+    if chat_id in st.session_state.chat_history:
+        st.session_state.current_chat_id = chat_id
+        st.session_state.messages = st.session_state.chat_history[chat_id]['messages']
+        
+        if chat_id not in st.session_state.chat_memories:
+            st.session_state.chat_memories[chat_id] = ConversationBufferMemory(
+                memory_key="history",
+                return_messages=True
+            )
+            for msg in st.session_state.messages:
+                if msg["role"] == "user":
+                    st.session_state.chat_memories[chat_id].chat_memory.add_user_message(msg["content"])
+                elif msg["role"] == "assistant":
+                    st.session_state.chat_memories[chat_id].chat_memory.add_ai_message(msg["content"])
+        st.rerun()
+
+def format_chat_title(chat):
+    """Format chat title"""
+    display_text = chat['first_message']
+    if display_text:
+        display_text = display_text[:50] + '...' if len(display_text) > 50 else display_text
+    else:
+        display_text = UI_TEXTS[interface_language]['new_chat']
+    return display_text
+
+def format_chat_date(timestamp):
+    """Format chat date"""
+    today = datetime.now().date()
+    chat_date = timestamp.date()
+    
+    if chat_date == today:
+        return UI_TEXTS[interface_language]['today']
+    elif chat_date == today - timedelta(days=1):
+        return UI_TEXTS[interface_language]['yesterday']
+    else:
+        return timestamp.strftime('%Y-%m-%d')
 
 # Initialize API key variables
 groq_api_key = "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"
@@ -88,6 +187,38 @@ with st.sidebar:
     else:
         apply_css_direction("ltr")  # Left-to-right for English
         st.title("Settings")  # Sidebar title in English
+
+    # New Chat button
+    if st.button(UI_TEXTS[interface_language]['new_chat'], use_container_width=True):
+        create_new_chat()
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Display chat history
+    st.markdown(f"### {UI_TEXTS[interface_language]['previous_chats']}")
+    
+    # Group chats by date
+    chats_by_date = {}
+    for chat_id, chat_data in st.session_state.chat_history.items():
+        if chat_data['visible'] and chat_data['messages']:
+            date = chat_data['timestamp'].date()
+            if date not in chats_by_date:
+                chats_by_date[date] = []
+            chats_by_date[date].append((chat_id, chat_data))
+    
+    # Display chats grouped by date
+    for date in sorted(chats_by_date.keys(), reverse=True):
+        chats = chats_by_date[date]
+        st.markdown(f"#### {format_chat_date(chats[0][1]['timestamp'])}")
+        
+        for chat_id, chat_data in sorted(chats, key=lambda x: x[1]['timestamp'], reverse=True):
+            if st.sidebar.button(
+                format_chat_title(chat_data),
+                key=f"chat_{chat_id}",
+                use_container_width=True
+            ):
+                load_chat(chat_id)
 
     # Validate API key inputs and initialize components if valid
     if groq_api_key and google_api_key:
@@ -385,69 +516,90 @@ if interface_language == "العربية":
 else:
     human_input = st.chat_input("Type your question here...")
 
-# If text input is detected, process it
-if human_input:
-    st.session_state.messages.append({"role": "user", "content": human_input})
-    with st.chat_message("user"):
-        st.markdown(human_input)
+# Create new chat if no chat is selected
+if st.session_state.current_chat_id is None:
+    create_new_chat()
 
-    if "vectors" in st.session_state and st.session_state.vectors is not None:
-        # Create and configure the document chain and retriever
-        document_chain = create_stuff_documents_chain(llm, prompt)
-        retriever = st.session_state.vectors.as_retriever()
-        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+def process_user_input(user_input, is_first_message=False):
+    try:
+        current_chat_id = st.session_state.current_chat_id
+        current_memory = st.session_state.chat_memories.get(current_chat_id)
+        
+        user_message = {"role": "user", "content": user_input}
+        st.session_state.messages.append(user_message)
+        
+        if is_first_message or (current_chat_id in st.session_state.chat_history and 
+                              not st.session_state.chat_history[current_chat_id]['messages']):
+            title = user_input.strip().replace('\n', ' ')
+            title = title[:50] + '...' if len(title) > 50 else title
+            st.session_state.chat_history[current_chat_id]['first_message'] = title
+            st.session_state.chat_history[current_chat_id]['visible'] = True
 
-        # Get response from the assistant
-        response = retrieval_chain.invoke({
-            "input": human_input,
-            "context": retriever.get_relevant_documents(human_input),
-            "history": st.session_state.memory.chat_memory.messages  # Include chat history
-        })
-        assistant_response = response["answer"]
+        if "vectors" in st.session_state and st.session_state.vectors is not None:
+            # Create and configure the document chain and retriever
+            document_chain = create_stuff_documents_chain(llm, prompt)
+            retriever = st.session_state.vectors.as_retriever()
+            retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-        # Append and display assistant's response
-        st.session_state.messages.append(
-            {"role": "assistant", "content": assistant_response}
-        )
-        with st.chat_message("assistant"):
-            st.markdown(assistant_response)
+            # Get response from the assistant
+            response = retrieval_chain.invoke({
+                "input": human_input,
+                "context": retriever.get_relevant_documents(human_input),
+                "history": st.session_state.memory.chat_memory.messages  # Include chat history
+            })
+            assistant_response = response["answer"]
 
-        # Add user and assistant messages to memory
-        st.session_state.memory.chat_memory.add_user_message(human_input)
-        st.session_state.memory.chat_memory.add_ai_message(assistant_response)
+            # Append and display assistant's response
+            st.session_state.messages.append(
+                {"role": "assistant", "content": assistant_response}
+            )
+            with st.chat_message("assistant"):
+                st.markdown(assistant_response)
 
-        # Check if the response contains any negative phrases
-        if not any(phrase in assistant_response for phrase in negative_phrases):
-            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
-                if "context" in response:
-                    # Extract unique page numbers from the context
-                    page_numbers = set()
-                    for doc in response["context"]:
-                        page_number = doc.metadata.get("page", "unknown")
-                        if page_number != "unknown" and str(page_number).isdigit():  # Check if page_number is a valid number
-                            page_numbers.add(int(page_number))  # Convert to integer for sorting
+            # Add user and assistant messages to memory
+            current_memory.chat_memory.add_user_message(user_input)
+            current_memory.chat_memory.add_ai_message(assistant_response)
+            
+            # Update chat history
+            st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
+            
+            if is_first_message:
+                st.rerun()
 
-                    # Display the page numbers
-                    if page_numbers:
-                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))  # Sort pages numerically and convert back to strings
-                        st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+            # Check if the response contains any negative phrases
+            if not any(phrase in assistant_response for phrase in negative_phrases):
+                with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
+                    if "context" in response:
+                        # Extract unique page numbers from the context
+                        page_numbers = set()
+                        for doc in response["context"]:
+                            page_number = doc.metadata.get("page", "unknown")
+                            if page_number != "unknown" and str(page_number).isdigit():  # Check if page_number is a valid number
+                                page_numbers.add(int(page_number))  # Convert to integer for sorting
 
-                        # Capture and display screenshots of the relevant pages
-                        highlighted_pages = [(page_number, "") for page_number in page_numbers]
-                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
-                        for screenshot in screenshots:
-                            st.image(screenshot)
+                        # Display the page numbers
+                        if page_numbers:
+                            page_numbers_str = ", ".join(map(str, sorted(page_numbers)))  # Sort pages numerically and convert back to strings
+                            st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+
+                            # Capture and display screenshots of the relevant pages
+                            highlighted_pages = [(page_number, "") for page_number in page_numbers]
+                            screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                            for screenshot in screenshots:
+                                st.image(screenshot)
+                        else:
+                            st.write("لا توجد أرقام صفحات صالحة في السياق." if interface_language == "العربية" else "No valid page numbers available in the context.")
                     else:
-                        st.write("لا توجد أرقام صفحات صالحة في السياق." if interface_language == "العربية" else "No valid page numbers available in the context.")
-                else:
-                    st.write("لا يوجد سياق متاح." if interface_language == "العربية" else "No context available.")
-    else:
-        # Prompt user to ensure embeddings are loaded
-        assistant_response = (
-            "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
-        )
-        st.session_state.messages.append(
-            {"role": "assistant", "content": assistant_response}
-        )
-        with st.chat_message("assistant"):
-            st.markdown(assistant_response)
+                        st.write("لا يوجد سياق متاح." if interface_language == "العربية" else "No context available.")
+        else:
+            # Prompt user to ensure embeddings are loaded
+            assistant_response = (
+                "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
+            )
+            st.session_state.messages.append(
+                {"role": "assistant", "content": assistant_response}
+            )
+            with st.chat_message("assistant"):
+                st.markdown(assistant_response)
+    except Exception as e:
+        st.error(f"Error processing input: {str(e)}")
