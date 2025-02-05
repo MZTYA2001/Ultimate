@@ -525,12 +525,22 @@ def process_user_input(user_input, is_first_message=False):
 
 # If voice input is detected, process it
 if voice_input:
-    # Check if this is the first message for the current chat
+    # Check if this is the first message
     is_first_message = len(st.session_state.messages) == 0
     
     # Display user message
     with st.chat_message("user"):
         st.markdown(voice_input)
+    
+    # Update chat title immediately if it's first message
+    if is_first_message:
+        current_chat_id = st.session_state.current_chat_id
+        if current_chat_id:
+            title = voice_input.strip().replace('\n', ' ')
+            title = title[:50] + '...' if len(title) > 50 else title
+            st.session_state.chat_history[current_chat_id]['first_message'] = title
+            st.session_state.chat_history[current_chat_id]['visible'] = True
+            st.session_state.chat_history[current_chat_id]['messages'] = []
     
     # Process voice input
     if "vectors" in st.session_state and st.session_state.vectors is not None:
@@ -598,12 +608,22 @@ else:
 
 # If text input is detected, process it
 if human_input:
-    # Check if this is the first message for the current chat
+    # Check if this is the first message
     is_first_message = len(st.session_state.messages) == 0
     
     # Display user message
     with st.chat_message("user"):
         st.markdown(human_input)
+    
+    # Update chat title immediately if it's first message
+    if is_first_message:
+        current_chat_id = st.session_state.current_chat_id
+        if current_chat_id:
+            title = human_input.strip().replace('\n', ' ')
+            title = title[:50] + '...' if len(title) > 50 else title
+            st.session_state.chat_history[current_chat_id]['first_message'] = title
+            st.session_state.chat_history[current_chat_id]['visible'] = True
+            st.session_state.chat_history[current_chat_id]['messages'] = []
     
     # Process text input
     if "vectors" in st.session_state and st.session_state.vectors is not None:
