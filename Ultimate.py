@@ -525,8 +525,66 @@ def process_user_input(user_input, is_first_message=False):
 
 # If voice input is detected, process it
 if voice_input:
-    is_first_message = len(st.session_state.messages) == 0
-    process_user_input(voice_input, is_first_message)
+    # First display the user message
+    with st.chat_message("user"):
+        st.markdown(voice_input)
+    
+    # Then append to session state
+    st.session_state.messages.append({"role": "user", "content": voice_input})
+
+    if "vectors" in st.session_state and st.session_state.vectors is not None:
+        # Create and configure the document chain and retriever
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = st.session_state.vectors.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+        # Get response from the assistant
+        response = retrieval_chain.invoke({
+            "input": voice_input,
+            "context": retriever.get_relevant_documents(voice_input),
+            "history": st.session_state.memory.chat_memory.messages  # Include chat history
+        })
+        assistant_response = response["answer"]
+
+        # Display assistant's response first
+        with st.chat_message("assistant"):
+            st.markdown(assistant_response)
+
+        # Then append to session state
+        st.session_state.messages.append(
+            {"role": "assistant", "content": assistant_response}
+        )
+
+        # Add user and assistant messages to memory
+        st.session_state.memory.chat_memory.add_user_message(voice_input)
+        st.session_state.memory.chat_memory.add_ai_message(assistant_response)
+
+        # Check if the response contains any negative phrases
+        if not any(phrase in assistant_response for phrase in negative_phrases):
+            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
+                if "context" in response:
+                    # Extract unique page numbers from the context
+                    page_numbers = set()
+                    for doc in response["context"]:
+                        page_number = doc.metadata.get("page", "unknown")
+                        if page_number != "unknown" and str(page_number).isdigit():
+                            page_numbers.add(int(page_number))
+
+                    # Display the page numbers
+                    if page_numbers:
+                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
+                        st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+
+                        # Capture and display screenshots of the relevant pages
+                        highlighted_pages = [(page_number, "") for page_number in page_numbers]
+                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                        for screenshot in screenshots:
+                            st.image(screenshot)
+                    else:
+                        st.write("لا توجد أرقام صفحات صالحة في السياق." if interface_language == "العربية" else "No valid page numbers available in the context.")
+                else:
+                    st.write("لا يوجد سياق متاح." if interface_language == "العربية" else "No context available.")
+
 
 
 # Text input field
