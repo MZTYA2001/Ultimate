@@ -151,7 +151,6 @@ class PDFSearchAndDisplay:
 
     def validate_page_number(self, page_number):
         """Validate if page number exists in PDF"""
-        # Adjust for 1-based page numbers in metadata
         return 1 <= page_number <= self.total_pages
 
     def search_and_highlight(self, pdf_path, search_term):
@@ -166,18 +165,22 @@ class PDFSearchAndDisplay:
     def capture_screenshots(self, pdf_path, pages):
         doc = fitz.open(pdf_path)
         screenshots = []
-        for page_number, _ in pages:
-            # Adjust for 0-based page numbers in PyMuPDF
-            pdf_page = page_number - 1
-            if self.validate_page_number(page_number):
-                try:
-                    page = doc.load_page(pdf_page)
-                    pix = page.get_pixmap()
-                    screenshot_path = f"screenshot_page_{page_number}.png"
-                    pix.save(screenshot_path)
-                    screenshots.append((screenshot_path, page_number))
-                except Exception as e:
-                    st.error(f"Error capturing screenshot for page {page_number}: {str(e)}")
+        try:
+            for page_number, _ in pages:
+                pdf_page = page_number - 1
+                if self.validate_page_number(page_number):
+                    try:
+                        page = doc.load_page(pdf_page)
+                        zoom = 3  # Higher zoom for better quality
+                        mat = fitz.Matrix(zoom, zoom)
+                        pix = page.get_pixmap(matrix=mat, alpha=False, colorspace="rgb")  # Use RGB colorspace
+                        screenshot_path = f"screenshot_page_{page_number}.png"
+                        pix.save(screenshot_path, output="png", jpg_quality=95)  # Higher quality output
+                        screenshots.append((screenshot_path, page_number))
+                    except Exception as e:
+                        st.error(f"Error capturing screenshot for page {page_number}: {str(e)}")
+        finally:
+            doc.close()  # Ensure document is always closed
         return screenshots
 
 # Sidebar configuration
@@ -494,41 +497,73 @@ def process_user_input(user_input):
                 # Update chat history
                 st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
 
-            # Always show page references section
+            # Always show page references section with optimized layout
             with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References", expanded=True):
                 if "context" in response:
-                    # Extract and validate page numbers
+                    # Extract and validate page numbers with improved accuracy
                     page_numbers = set()
+                    page_contexts = {}  # Store context for each page
                     for doc in response["context"]:
                         page_number = doc.metadata.get("page", "unknown")
                         if page_number != "unknown" and str(page_number).isdigit():
                             page_num = int(page_number)
                             if pdf_searcher.validate_page_number(page_num):
                                 page_numbers.add(page_num)
+                                if page_num not in page_contexts:
+                                    page_contexts[page_num] = []
+                                page_contexts[page_num].append(doc.page_content)
 
                     if page_numbers:
-                        # Display page numbers
+                        # Display page numbers with better formatting
+                        st.markdown(f"### {'الصفحات المرجعية' if interface_language == 'العربية' else 'Reference Pages'}")
                         page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
-                        st.write(f"### {'الصفحات المرجعية:' if interface_language == 'العربية' else 'Reference Pages:'} {page_numbers_str}")
-                        st.write("---")
+                        st.info(f"{'الإجابة مأخوذة من الصفحات:' if interface_language == 'العربية' else 'Answer sourced from pages:'} {page_numbers_str}")
 
-                        # Create two columns for screenshots with better spacing
+                        # Create grid layout for screenshots
                         num_pages = len(page_numbers)
-                        col1, col2 = st.columns(2)
-                        
-                        for idx, page_number in enumerate(sorted(page_numbers)):
-                            col = col1 if idx % 2 == 0 else col2
-                            with col:
-                                st.write(f"#### {'صفحة' if interface_language == 'العربية' else 'Page'} {page_number}")
-                                highlighted_pages = [(page_number, "")]
-                                screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
-                                for screenshot, page_num in screenshots:
-                                    st.image(screenshot, use_column_width=True)
-                                st.write("---")
+                        if num_pages > 0:
+                            # Use single column for one page, two columns for multiple pages
+                            num_cols = 1 if num_pages == 1 else 2
+                            cols = st.columns(num_cols)
+                            
+                            for idx, page_number in enumerate(sorted(page_numbers)):
+                                with cols[idx % num_cols]:
+                                    with st.container():
+                                        # Display screenshot with proper scaling
+                                        highlighted_pages = [(page_number, "")]
+                                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                                        for screenshot, page_num in screenshots:
+                                            # Add image with proper sizing and caption
+                                            st.image(
+                                                screenshot, 
+                                                caption=f"{'صفحة' if interface_language == 'العربية' else 'Page'} {page_num}",
+                                                use_column_width=True,
+                                                output_format="PNG"
+                                            )
+                                        
+                                        # Add relevant context if available and not empty
+                                        if page_number in page_contexts and page_contexts[page_number]:
+                                            with st.expander(f"{'المحتوى ذو الصلة' if interface_language == 'العربية' else 'Relevant Content'}", expanded=False):
+                                                for context in page_contexts[page_number]:
+                                                    st.markdown(f"```\n{context.strip()}\n```")
+                                        
+                                        # Add spacing between pages
+                                        st.write("")
+
+
                     else:
-                        st.warning("لم يتم العثور على صفحات صالحة للإجابة" if interface_language == "العربية" else "No valid pages found for the answer")
+                        st.warning(
+                            "لم يتم العثور على صفحات مرجعية صالحة للإجابة. يرجى التحقق من صحة المعلومات." 
+                            if interface_language == "العربية" 
+                            else "No valid reference pages found for the answer. Please verify the information."
+                        )
                 else:
-                    st.warning("لم يتم العثور على سياق للإجابة" if interface_language == "العربية" else "No context found for the answer")
+                    st.warning(
+                        "لم يتم العثور على سياق مرجعي للإجابة. يرجى إعادة صياغة السؤال." 
+                        if interface_language == "العربية" 
+                        else "No reference context found for the answer. Please rephrase your question."
+                    )
+
 
         else:
             assistant_response = (
