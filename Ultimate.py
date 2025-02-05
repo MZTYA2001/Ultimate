@@ -464,11 +464,11 @@ def process_user_input(user_input, is_first_message=False):
             retriever = st.session_state.vectors.as_retriever()
             retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-            # Get response from the assistant
+            # Get response from the assistant using chat-specific memory
             response = retrieval_chain.invoke({
                 "input": user_input,
                 "context": retriever.get_relevant_documents(user_input),
-                "history": st.session_state.memory.chat_memory.messages  # Include chat history
+                "history": current_memory.chat_memory.messages  # Use chat-specific memory
             })
             assistant_response = response["answer"]
 
@@ -479,7 +479,7 @@ def process_user_input(user_input, is_first_message=False):
             with st.chat_message("assistant"):
                 st.markdown(assistant_response)
 
-            # Add user and assistant messages to memory
+            # Add user and assistant messages to chat-specific memory
             current_memory.chat_memory.add_user_message(user_input)
             current_memory.chat_memory.add_ai_message(assistant_response)
             
@@ -497,12 +497,12 @@ def process_user_input(user_input, is_first_message=False):
                         page_numbers = set()
                         for doc in response["context"]:
                             page_number = doc.metadata.get("page", "unknown")
-                            if page_number != "unknown" and str(page_number).isdigit():  # Check if page_number is a valid number
-                                page_numbers.add(int(page_number))  # Convert to integer for sorting
+                            if page_number != "unknown" and str(page_number).isdigit():
+                                page_numbers.add(int(page_number))
 
                         # Display the page numbers
                         if page_numbers:
-                            page_numbers_str = ", ".join(map(str, sorted(page_numbers)))  # Sort pages numerically and convert back to strings
+                            page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
                             st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
 
                             # Capture and display screenshots of the relevant pages
