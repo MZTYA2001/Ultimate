@@ -371,7 +371,7 @@ with col2:
         - سيتم الرد عليك بناءً على المعلومات المتاحة.  
         """)
     else:
-        st.title("Mohammed Al-Yaseen | BGC ChatBot")
+        st.title(" Al-Yaseen | BGC ChatBot")
         st.write("""
         **Welcome!**  
         This is the Basrah Gas Company (BGC) ChatBot. You can use this bot to get information about the company and its activities.  
