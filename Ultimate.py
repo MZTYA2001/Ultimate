@@ -436,19 +436,21 @@ negative_phrases = [
 
 # Display chat history
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if message["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(message["content"])
+    elif message["role"] == "assistant":
+        with st.chat_message("assistant"):
+            st.markdown(message["content"])
 
 def process_user_input(user_input, is_first_message=False):
     try:
         current_chat_id = st.session_state.current_chat_id
         current_memory = st.session_state.chat_memories.get(current_chat_id)
         
-        user_message = {"role": "user", "content": user_input}
-        st.session_state.messages.append(user_message)
-        
         if is_first_message or (current_chat_id in st.session_state.chat_history and 
                               not st.session_state.chat_history[current_chat_id]['messages']):
+
             title = user_input.strip().replace('\n', ' ')
             title = title[:50] + '...' if len(title) > 50 else title
             st.session_state.chat_history[current_chat_id]['first_message'] = title
@@ -479,28 +481,20 @@ def process_user_input(user_input, is_first_message=False):
                     page_numbers.add(int(page_number))
 
             # Format page references
-            page_refs = ""
             if page_numbers:
                 page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
-                page_refs = f"\n\n(Source: Page{' ' if len(page_numbers) == 1 else 's '}{page_numbers_str})"
-                assistant_response += page_refs
+                assistant_response += f"\n\n(Source: Page{' ' if len(page_numbers) == 1 else 's '}{page_numbers_str})"
 
-            # Append and display assistant's response
-            st.session_state.messages.append(
-                {"role": "assistant", "content": assistant_response}
-            )
-            with st.chat_message("assistant"):
-                st.markdown(assistant_response)
-
-            # Add user and assistant messages to chat-specific memory
+            # Add messages to chat memory
             current_memory.chat_memory.add_user_message(user_input)
             current_memory.chat_memory.add_ai_message(assistant_response)
             
-            # Update chat history
-            st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
-            
-            if is_first_message:
-                st.rerun()
+            # Update messages in session state
+            st.session_state.messages.extend([
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": assistant_response}
+            ])
+            st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages.copy()
 
             # Show page references and PDF screenshots if valid response
             if not any(phrase in assistant_response for phrase in negative_phrases) and page_numbers:
@@ -513,19 +507,24 @@ def process_user_input(user_input, is_first_message=False):
                     for screenshot in screenshots:
                         st.image(screenshot)
 
+            if is_first_message:
+                st.rerun()
+
         else:
             # Prompt user to ensure embeddings are loaded
             assistant_response = (
                 "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else 
                 "Embeddings not loaded. Please check if the embeddings path is correct."
             )
-            st.session_state.messages.append(
+            st.session_state.messages.extend([
+                {"role": "user", "content": user_input},
                 {"role": "assistant", "content": assistant_response}
-            )
-            with st.chat_message("assistant"):
-                st.markdown(assistant_response)
+            ])
+            st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages.copy()
+
     except Exception as e:
         st.error(f"Error processing input: {str(e)}")
+
 
 # If voice input is detected, process it
 if voice_input:
@@ -538,10 +537,6 @@ if voice_input:
         title = title[:50] + '...' if len(title) > 50 else title
         st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
         st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(voice_input)
     
     # Process voice input
     process_user_input(voice_input, is_first_message)
@@ -564,12 +559,10 @@ if human_input:
         st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
         st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
     
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(human_input)
-    
     # Process the input
     process_user_input(human_input, is_first_message)
+
+
 
 
 # Create new chat if no chat is selected
