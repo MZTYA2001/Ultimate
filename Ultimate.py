@@ -443,93 +443,6 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# If voice input is detected, process it
-if voice_input:
-    st.session_state.messages.append({"role": "user", "content": voice_input})
-    with st.chat_message("user"):
-        st.markdown(voice_input)
-
-    if "vectors" in st.session_state and st.session_state.vectors is not None:
-        # Create and configure the document chain and retriever
-        document_chain = create_stuff_documents_chain(llm, prompt)
-        retriever = st.session_state.vectors.as_retriever()
-        retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
-        # Get response from the assistant
-        response = retrieval_chain.invoke({
-            "input": voice_input,
-            "context": retriever.get_relevant_documents(voice_input),
-            "history": st.session_state.memory.chat_memory.messages  # Include chat history
-        })
-        assistant_response = response["answer"]
-
-        # Append and display assistant's response
-        st.session_state.messages.append(
-            {"role": "assistant", "content": assistant_response}
-        )
-        with st.chat_message("assistant"):
-            st.markdown(assistant_response)
-
-        # Add user and assistant messages to memory
-        st.session_state.memory.chat_memory.add_user_message(voice_input)
-        st.session_state.memory.chat_memory.add_ai_message(assistant_response)
-
-        # Check if the response contains any negative phrases
-        if not any(phrase in assistant_response for phrase in negative_phrases):
-            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
-                if "context" in response:
-                    # Extract unique page numbers from the context
-                    page_numbers = set()
-                    for doc in response["context"]:
-                        page_number = doc.metadata.get("page", "unknown")
-                        if page_number != "unknown" and str(page_number).isdigit():  # Check if page_number is a valid number
-                            page_numbers.add(int(page_number))  # Convert to integer for sorting
-
-                    # Display the page numbers
-                    if page_numbers:
-                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))  # Sort pages numerically and convert back to strings
-                        st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This answer is according to pages: {page_numbers_str}")
-
-                        # Capture and display screenshots of the relevant pages
-                        highlighted_pages = [(page_number, "") for page_number in page_numbers]
-                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
-                        for screenshot in screenshots:
-                            st.image(screenshot)
-                    else:
-                        st.write("لا توجد أرقام صفحات صالحة في السياق." if interface_language == "العربية" else "No valid page numbers available in the context.")
-                else:
-                    st.write("لا يوجد سياق متاح." if interface_language == "العربية" else "No context available.")
-    else:
-        # Prompt user to ensure embeddings are loaded
-        assistant_response = (
-            "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
-        )
-        st.session_state.messages.append(
-            {"role": "assistant", "content": assistant_response}
-        )
-        with st.chat_message("assistant"):
-            st.markdown(assistant_response)
-
-# Text input field
-if interface_language == "العربية":
-    human_input = st.chat_input("اكتب سؤالك هنا...")
-else:
-    human_input = st.chat_input("Type your question here...")
-
-# If text input is detected, process it
-if human_input:
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(human_input)
-    
-    # Process the input
-    is_first_message = len(st.session_state.messages) == 0
-    process_user_input(human_input, is_first_message)
-
-# Create new chat if no chat is selected
-if st.session_state.current_chat_id is None:
-    create_new_chat()
-
 def process_user_input(user_input, is_first_message=False):
     try:
         current_chat_id = st.session_state.current_chat_id
@@ -553,8 +466,8 @@ def process_user_input(user_input, is_first_message=False):
 
             # Get response from the assistant
             response = retrieval_chain.invoke({
-                "input": human_input,
-                "context": retriever.get_relevant_documents(human_input),
+                "input": user_input,
+                "context": retriever.get_relevant_documents(user_input),
                 "history": st.session_state.memory.chat_memory.messages  # Include chat history
             })
             assistant_response = response["answer"]
@@ -613,3 +526,31 @@ def process_user_input(user_input, is_first_message=False):
                 st.markdown(assistant_response)
     except Exception as e:
         st.error(f"Error processing input: {str(e)}")
+
+# If voice input is detected, process it
+if voice_input:
+    is_first_message = len(st.session_state.messages) == 0
+    process_user_input(voice_input, is_first_message)
+
+
+# Text input field
+if interface_language == "العربية":
+    human_input = st.chat_input("اكتب سؤالك هنا...")
+else:
+    human_input = st.chat_input("Type your question here...")
+
+# If text input is detected, process it
+if human_input:
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(human_input)
+    
+    # Process the input
+    is_first_message = len(st.session_state.messages) == 0
+    process_user_input(human_input, is_first_message)
+
+# Create new chat if no chat is selected
+if st.session_state.current_chat_id is None:
+    create_new_chat()
+
+
