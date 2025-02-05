@@ -8,8 +8,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.memory import ConversationBufferMemory
 from streamlit_mic_recorder import speech_to_text
+import fitz
+import pdfplumber
 from datetime import datetime, timedelta
-
 
 # Add UI text dictionary for multilingual support
 UI_TEXTS = {
@@ -113,12 +114,12 @@ def format_chat_date(timestamp):
 groq_api_key = "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"
 google_api_key = "AIzaSyDdAiOdIa2I28sphYw36Genb4D--2IN1tU"
 
+# Change the page title and icon
 st.set_page_config(
-    page_title="BGC ChatBot",
-    page_icon="BGC Logo Colored.svg",
-    layout="wide"
+    page_title="BGC ChatBot",  # Page title
+    page_icon="BGC Logo Colored.svg",  # New page icon
+    layout="wide"  # Page layout
 )
-
 
 # Function to apply CSS based on language direction
 def apply_css_direction(direction):
@@ -141,8 +142,38 @@ def apply_css_direction(direction):
         unsafe_allow_html=True,
     )
 
+# PDF Search and Screenshot Class
+class PDFSearchAndDisplay:
+    def __init__(self):
+        pass
 
+    def search_and_highlight(self, pdf_path, search_term):
+        highlighted_pages = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_number, page in enumerate(pdf.pages):
+                text = page.extract_text()
+                if search_term in text:
+                    highlighted_pages.append((page_number, text))
+        return highlighted_pages
 
+    def capture_screenshots(self, pdf_path, pages):
+        doc = fitz.open(pdf_path)
+        screenshots = []
+        for page_number, _ in pages:
+            # Validate page number
+            if page_number < 0 or page_number >= len(doc):
+                st.warning(f"Invalid page number: {page_number}. Skipping this page.")
+                continue  # Skip invalid page numbers
+
+            try:
+                page = doc.load_page(page_number)
+                pix = page.get_pixmap()
+                screenshot_path = f"screenshot_page_{page_number}.png"
+                pix.save(screenshot_path)
+                screenshots.append(screenshot_path)
+            except Exception as e:
+                st.error(f"Error capturing screenshot for page {page_number}: {str(e)}")
+        return screenshots
 
 # Sidebar configuration
 with st.sidebar:
@@ -219,24 +250,26 @@ with st.sidebar:
                 If the documentation does not contain an answer, respond with:
                 English: "I'm sorry, I don't have enough information to answer that question."
                 Arabic: "عذرًا، لا أملك معلومات كافية للإجابة على هذا السؤال."
-
-                4. Restricting Responses:
+                Do not reference page numbers if an answer is not found in the documents.
+                4. Restricting Responses to Documented Context Only:
                 Strictly answer questions related to the provided documents.
-                If a question is outside the scope of the provided documentation, state:
+                If a question is outside the scope of the provided documentation, do not generate an answer. Simply state:
                 English: "I can only answer questions based on the provided documentation."
                 Arabic: "يمكنني فقط الإجابة على الأسئلة بناءً على الوثائق المقدمة."
                 Do not provide external information or speculate.
-
-                5. Accuracy and Formatting:
-                Present information clearly and accurately.
-                Format responses for readability.
-                Include complete information when presenting data or tables.
-
-                6. Professionalism:
-                Maintain a formal, respectful, and precise tone.
-                Stick to factual information from the documentation.
-                Avoid assumptions or approximations.
-
+                5. Accuracy, Source Referencing, and Formatting:
+                Ensure that referenced page numbers are accurate and correspond exactly to where the information is found.
+                Do not paraphrase unnecessarily:
+                If an exact match is found in the documents, provide the text as is, formatting it for readability.
+                Provide complete tables if requested—do not omit any information.
+                6. Professionalism and Clarity:
+                Maintain a formal, respectful, and precise tone in all responses.
+                Avoid assumptions or approximations. Stick to factual information from the documentation.
+                7. Handling Multi-Section Queries:
+                If an answer spans multiple sections, state that the topic is covered in different parts of the document and ask the user to clarify the specific aspect they are interested in.
+                8. Content Updates and Discrepancies:
+                If discrepancies exist between the example responses provided in this prompt and the latest available documentation, prioritize the latest information.
+                If there is uncertainty due to updates, state that the response is based on the most recent available documentation.
                 Example Responses:
                 User: "What are the Life Saving Rules?"
                 Response:
@@ -250,8 +283,8 @@ with st.sidebar:
                 Line of Fire
                 Safe Mechanical Lifting
                 Work Authorization
-                Working at Height"
-
+                Working at Height
+                (Source: Page X)" (Ensure page reference is correct before responding.)
                 User: "What is PTW?"
                 Response:
                 "BGC’s PTW (Permit To Work) is a formal documented system that manages specific work within BGC’s locations and activities. PTW ensures hazards and risks are identified, and controls are in place to prevent harm to People, Assets, Community, and the Environment (PACE). (Source: Page X)"
@@ -309,14 +342,17 @@ with st.sidebar:
     else:
         st.error("الرجاء إدخال مفاتيح API للمتابعة." if interface_language == "العربية" else "Please enter both API keys to proceed.")
 
-# Main area for chat interface
+# Initialize the PDFSearchAndDisplay class with the default PDF file
+pdf_path = "BGC.pdf"
+pdf_searcher = PDFSearchAndDisplay()
 
+# Main area for chat interface
 # Use columns to display logo and title side by side
 col1, col2 = st.columns([1, 4])  # Adjust the ratio as needed
 
 # Display the logo in the first column
 with col1:
-    st.image("BGC Logo Colored.svg", width=100, use_container_width=False)  # Adjust the width as needed
+    st.image("BGC Logo Colored.svg", width=100)  # Adjust the width as needed
 
 # Display the title and description in the second column
 with col2:
@@ -403,82 +439,165 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-def process_user_input(user_input):
+def process_user_input(user_input, is_first_message=False):
     try:
         current_chat_id = st.session_state.current_chat_id
         current_memory = st.session_state.chat_memories.get(current_chat_id)
         
-        # Handle first message case
-        is_first_message = len(st.session_state.messages) == 0
-        if is_first_message and current_chat_id:
+        user_message = {"role": "user", "content": user_input}
+        st.session_state.messages.append(user_message)
+        
+        if is_first_message or (current_chat_id in st.session_state.chat_history and 
+                              not st.session_state.chat_history[current_chat_id]['messages']):
             title = user_input.strip().replace('\n', ' ')
             title = title[:50] + '...' if len(title) > 50 else title
             st.session_state.chat_history[current_chat_id]['first_message'] = title
             st.session_state.chat_history[current_chat_id]['visible'] = True
 
-        # Display user message only if it's not already displayed
-        if not st.session_state.messages or st.session_state.messages[-1]["role"] != "user" or st.session_state.messages[-1]["content"] != user_input:
-            with st.chat_message("user"):
-                st.markdown(user_input)
-        
         if "vectors" in st.session_state and st.session_state.vectors is not None:
             # Create and configure the document chain and retriever
             document_chain = create_stuff_documents_chain(llm, prompt)
             retriever = st.session_state.vectors.as_retriever()
             retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-            # Get response from the assistant
+            # Get response from the assistant using chat-specific memory
             response = retrieval_chain.invoke({
                 "input": user_input,
                 "context": retriever.get_relevant_documents(user_input),
-                "history": current_memory.chat_memory.messages
+                "history": current_memory.chat_memory.messages  # Use chat-specific memory
             })
             assistant_response = response["answer"]
 
-            # Display assistant's response
-            with st.chat_message("assistant"):
-                st.markdown(assistant_response)
-
-            # Update session state only if messages aren't already added
-            if not st.session_state.messages or st.session_state.messages[-1]["content"] != assistant_response:
-                st.session_state.messages.extend([
-                    {"role": "user", "content": user_input},
-                    {"role": "assistant", "content": assistant_response}
-                ])
-                
-                # Update chat-specific memory
-                current_memory.chat_memory.add_user_message(user_input)
-                current_memory.chat_memory.add_ai_message(assistant_response)
-                
-                # Update chat history
-                st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
-
-        else:
-            assistant_response = (
-                "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
+            # Append and display assistant's response
+            st.session_state.messages.append(
+                {"role": "assistant", "content": assistant_response}
             )
             with st.chat_message("assistant"):
                 st.markdown(assistant_response)
-            
-            # Update session state only if messages aren't already added
-            if not st.session_state.messages or st.session_state.messages[-1]["content"] != assistant_response:
-                st.session_state.messages.extend([
-                    {"role": "user", "content": user_input},
-                    {"role": "assistant", "content": assistant_response}
-                ])
 
-        # Rerun only if it's the first message to update the chat title
-        if is_first_message:
-            st.rerun()
+            # Add user and assistant messages to chat-specific memory
+            current_memory.chat_memory.add_user_message(user_input)
+            current_memory.chat_memory.add_ai_message(assistant_response)
             
+            # Update chat history
+            st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
+            
+            if is_first_message:
+                st.rerun()
+
+            # Check if the response contains any negative phrases
+            if not any(phrase in assistant_response for phrase in negative_phrases):
+                with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
+                    if "context" in response:
+                        # Extract unique page numbers from the context
+                        page_numbers = set()
+                        for doc in response["context"]:
+                            page_number = doc.metadata.get("page", "unknown")
+                            if page_number != "unknown" and str(page_number).isdigit():
+                                page_numbers.add(int(page_number))
+
+                        # Display the page numbers
+                        if page_numbers:
+                            page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
+                            st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+
+                            # Capture and display screenshots of the relevant pages
+                            highlighted_pages = [(page_number, "") for page_number in page_numbers]
+                            screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                            for screenshot in screenshots:
+                                st.image(screenshot)
+                        else:
+                            st.write("لا توجد أرقام صفحات صالحة في السياق." if interface_language == "العربية" else "No valid page numbers available in the context.")
+                    else:
+                        st.write("لا يوجد سياق متاح." if interface_language == "العربية" else "No context available.")
+        else:
+            # Prompt user to ensure embeddings are loaded
+            assistant_response = (
+                "لم يتم تحميل التضميدات. يرجى التحقق مما إذا كان مسار التضميدات صحيحًا." if interface_language == "العربية" else "Embeddings not loaded. Please check if the embeddings path is correct."
+            )
+            st.session_state.messages.append(
+                {"role": "assistant", "content": assistant_response}
+            )
+            with st.chat_message("assistant"):
+                st.markdown(assistant_response)
     except Exception as e:
         st.error(f"Error processing input: {str(e)}")
 
-
-
 # If voice input is detected, process it
 if voice_input:
-    process_user_input(voice_input)
+    # Check if this is the first message
+    is_first_message = len(st.session_state.messages) == 0
+    
+    # If it's first message, update chat title immediately
+    if is_first_message and st.session_state.current_chat_id:
+        title = voice_input.strip().replace('\n', ' ')
+        title = title[:50] + '...' if len(title) > 50 else title
+        st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
+        st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(voice_input)
+    
+    # Process voice input
+    process_user_input(voice_input, is_first_message)
+
+    if "vectors" in st.session_state and st.session_state.vectors is not None:
+        # Create and configure the document chain and retriever
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = st.session_state.vectors.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+        # Get response from the assistant
+        response = retrieval_chain.invoke({
+            "input": voice_input,
+            "context": retriever.get_relevant_documents(voice_input),
+            "history": st.session_state.memory.chat_memory.messages
+        })
+        assistant_response = response["answer"]
+
+        # Update messages and display
+        st.session_state.messages.append({"role": "user", "content": voice_input})
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+        
+        with st.chat_message("assistant"):
+            st.markdown(assistant_response)
+
+        # Add to memory
+        st.session_state.memory.chat_memory.add_user_message(voice_input)
+        st.session_state.memory.chat_memory.add_ai_message(assistant_response)
+
+        # If this is the first message, update chat title
+        if is_first_message:
+            current_chat_id = st.session_state.current_chat_id
+            if current_chat_id:
+                title = voice_input.strip().replace('\n', ' ')
+                title = title[:50] + '...' if len(title) > 50 else title
+                st.session_state.chat_history[current_chat_id]['first_message'] = title
+                st.session_state.chat_history[current_chat_id]['visible'] = True
+                st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
+
+        # Always show page references if response is valid
+        if not any(phrase in assistant_response for phrase in negative_phrases):
+            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
+                if "context" in response:
+                    # Extract and display page numbers
+                    page_numbers = set()
+                    for doc in response["context"]:
+                        page_number = doc.metadata.get("page", "unknown")
+                        if page_number != "unknown" and str(page_number).isdigit():
+                            page_numbers.add(int(page_number))
+
+                    if page_numbers:
+                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
+                        st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+
+                        highlighted_pages = [(page_number, "") for page_number in page_numbers]
+                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                        for screenshot in screenshots:
+                            st.image(screenshot)
+
+
 
 # Text input field
 if interface_language == "العربية":
@@ -488,11 +607,80 @@ else:
 
 # If text input is detected, process it
 if human_input:
-    process_user_input(human_input)
+    # Check if this is the first message
+    is_first_message = len(st.session_state.messages) == 0
+    
+    # If it's first message, update chat title immediately
+    if is_first_message and st.session_state.current_chat_id:
+        title = human_input.strip().replace('\n', ' ')
+        title = title[:50] + '...' if len(title) > 50 else title
+        st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
+        st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(human_input)
+    
+    # Process the input
+    process_user_input(human_input, is_first_message)
+
+    if "vectors" in st.session_state and st.session_state.vectors is not None:
+        # Create and configure the document chain and retriever
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = st.session_state.vectors.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+        # Get response from the assistant
+        response = retrieval_chain.invoke({
+            "input": human_input,
+            "context": retriever.get_relevant_documents(human_input),
+            "history": st.session_state.memory.chat_memory.messages
+        })
+        assistant_response = response["answer"]
+
+        # Update messages and display
+        st.session_state.messages.append({"role": "user", "content": human_input})
+        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
+        
+        with st.chat_message("assistant"):
+            st.markdown(assistant_response)
+
+        # Add to memory
+        st.session_state.memory.chat_memory.add_user_message(human_input)
+        st.session_state.memory.chat_memory.add_ai_message(assistant_response)
+
+        # If this is the first message, update chat title
+        if is_first_message:
+            current_chat_id = st.session_state.current_chat_id
+            if current_chat_id:
+                title = human_input.strip().replace('\n', ' ')
+                title = title[:50] + '...' if len(title) > 50 else title
+                st.session_state.chat_history[current_chat_id]['first_message'] = title
+                st.session_state.chat_history[current_chat_id]['visible'] = True
+                st.session_state.chat_history[current_chat_id]['messages'] = st.session_state.messages
+
+        # Always show page references if response is valid
+        if not any(phrase in assistant_response for phrase in negative_phrases):
+            with st.expander("مراجع الصفحات" if interface_language == "العربية" else "Page References"):
+                if "context" in response:
+                    # Extract and display page numbers
+                    page_numbers = set()
+                    for doc in response["context"]:
+                        page_number = doc.metadata.get("page", "unknown")
+                        if page_number != "unknown" and str(page_number).isdigit():
+                            page_numbers.add(int(page_number))
+
+                    if page_numbers:
+                        page_numbers_str = ", ".join(map(str, sorted(page_numbers)))
+                        st.write(f"هذه الإجابة وفقًا للصفحات: {page_numbers_str}" if interface_language == "العربية" else f"This Answer is According to Pages: {page_numbers_str}")
+
+                        highlighted_pages = [(page_number, "") for page_number in page_numbers]
+                        screenshots = pdf_searcher.capture_screenshots(pdf_path, highlighted_pages)
+                        for screenshot in screenshots:
+                            st.image(screenshot)
 
 # Create new chat if no chat is selected
 if st.session_state.current_chat_id is None:
     create_new_chat()
-
 
 
