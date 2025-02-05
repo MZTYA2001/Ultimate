@@ -528,21 +528,20 @@ if voice_input:
     # Check if this is the first message
     is_first_message = len(st.session_state.messages) == 0
     
+    # If it's first message, update chat title immediately
+    if is_first_message and st.session_state.current_chat_id:
+        title = voice_input.strip().replace('\n', ' ')
+        title = title[:50] + '...' if len(title) > 50 else title
+        st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
+        st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
+    
     # Display user message
     with st.chat_message("user"):
         st.markdown(voice_input)
     
-    # Update chat title immediately if it's first message
-    if is_first_message:
-        current_chat_id = st.session_state.current_chat_id
-        if current_chat_id:
-            title = voice_input.strip().replace('\n', ' ')
-            title = title[:50] + '...' if len(title) > 50 else title
-            st.session_state.chat_history[current_chat_id]['first_message'] = title
-            st.session_state.chat_history[current_chat_id]['visible'] = True
-            st.session_state.chat_history[current_chat_id]['messages'] = []
-    
     # Process voice input
+    process_user_input(voice_input, is_first_message)
+
     if "vectors" in st.session_state and st.session_state.vectors is not None:
         # Create and configure the document chain and retriever
         document_chain = create_stuff_documents_chain(llm, prompt)
@@ -611,21 +610,20 @@ if human_input:
     # Check if this is the first message
     is_first_message = len(st.session_state.messages) == 0
     
+    # If it's first message, update chat title immediately
+    if is_first_message and st.session_state.current_chat_id:
+        title = human_input.strip().replace('\n', ' ')
+        title = title[:50] + '...' if len(title) > 50 else title
+        st.session_state.chat_history[st.session_state.current_chat_id]['first_message'] = title
+        st.session_state.chat_history[st.session_state.current_chat_id]['visible'] = True
+    
     # Display user message
     with st.chat_message("user"):
         st.markdown(human_input)
     
-    # Update chat title immediately if it's first message
-    if is_first_message:
-        current_chat_id = st.session_state.current_chat_id
-        if current_chat_id:
-            title = human_input.strip().replace('\n', ' ')
-            title = title[:50] + '...' if len(title) > 50 else title
-            st.session_state.chat_history[current_chat_id]['first_message'] = title
-            st.session_state.chat_history[current_chat_id]['visible'] = True
-            st.session_state.chat_history[current_chat_id]['messages'] = []
-    
-    # Process text input
+    # Process the input
+    process_user_input(human_input, is_first_message)
+
     if "vectors" in st.session_state and st.session_state.vectors is not None:
         # Create and configure the document chain and retriever
         document_chain = create_stuff_documents_chain(llm, prompt)
